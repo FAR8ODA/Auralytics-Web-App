@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data - never commit raw audio
+data/raw/
+data/processed/
+*.wav
+*.mp3
+*.flac
+
+# Model weights - too large for git
+models/*.pth
+models/*.pt
+models/*.ckpt
+
+# Results / outputs
+results/figures/
+results/logs/
+!results/figures/.gitkeep
+!results/logs/.gitkeep
+
+# Environment
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Legacy local scratch space to keep GitHub clean
+web/
+\{data,notebooks,src,models,results,web/

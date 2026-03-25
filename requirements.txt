@@ -1,0 +1,27 @@
+# Core ML
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# Audio and signal processing
+librosa>=0.10.0
+soundfile>=0.12.0
+scipy>=1.11.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Utilities
+tqdm>=4.65.0
+pandas>=2.0.0
+
+# Notebooks
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Backend support
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
