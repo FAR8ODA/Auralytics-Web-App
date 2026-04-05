@@ -2,17 +2,7 @@
 
 **Acoustic anomaly detection for predictive maintenance.**
 
-Auralytics listens to industrial machine audio and flags abnormal behavior before failure occurs. Built on the DCASE 2020 Task 2 benchmark, it trains a convolutional autoencoder on normal machine sounds — when a new clip reconstructs poorly, that reconstruction error is the anomaly signal.
-
-The project ships with a live web demo: upload a `.wav` clip, pick a machine type, and get back an anomaly score, a verdict, and a spectrogram visualization.
-
----
-
-## Demo
-
-> Upload a `.wav` → get an anomaly score + spectrogram explanation
-
-*(Demo link coming after model training — see roadmap)*
+Auralytics listens to industrial machine audio and flags abnormal behavior before failure occurs. A convolutional autoencoder is trained on normal machine sounds — when a new clip reconstructs poorly, that reconstruction error is the anomaly signal. The project ships with a live web demo: upload a `.wav` clip, pick a machine type, and get back an anomaly score and a spectrogram visualization.
 
 ---
 
@@ -22,19 +12,19 @@ The project ships with a live web demo: upload a `.wav` clip, pick a machine typ
 raw audio (.wav)
       │
       ▼
-log-mel spectrogram  (128 mels, FFT 1024, hop 512, 16 kHz)
+log-mel spectrogram  (128 mels · FFT 1024 · hop 512 · 16 kHz)
       │
       ▼
 convolutional autoencoder  (trained on normal clips only)
       │
       ▼
-reconstruction error  (MSE between input and output)
+reconstruction error (MSE)
       │
       ▼
-anomaly score  →  NORMAL / ANOMALOUS verdict
+anomaly score  ──►  NORMAL / ANOMALOUS verdict
 ```
 
-High reconstruction error = the model has never seen sounds like this = likely anomalous.
+High reconstruction error means the model has never seen sounds like this — likely anomalous.
 
 ---
 
@@ -42,13 +32,13 @@ High reconstruction error = the model has never seen sounds like this = likely a
 
 [DCASE 2020 Task 2](https://dcase.community/challenge2020/task2-unsupervised-detection-of-anomalous-sounds) — Unsupervised Anomalous Sound Detection in Machine Condition Monitoring.
 
-| Machine | Train (normal) | Test (normal + anomalous) |
-|---------|---------------|--------------------------|
-| Fan     | ~1 000        | ~400 + 400               |
-| Pump    | ~1 000        | ~400 + 400               |
-| Valve   | ~1 000        | ~400 + 400               |
+| Machine | Train (normal) | Test normal | Test anomalous |
+|---------|---------------|-------------|----------------|
+| Fan     | 3 675         | 400         | 1 475          |
+| Pump    | 3 349         | 400         | 456            |
+| Valve   | 3 291         | 400         | 479            |
 
-Download: [zenodo.org/records/3678171](https://zenodo.org/records/3678171) — see [`data/README.md`](data/README.md) for setup.
+Download: [zenodo.org/records/3678171](https://zenodo.org/records/3678171) — see [`data/README.md`](data/README.md) for setup instructions.
 
 ---
 
@@ -57,29 +47,29 @@ Download: [zenodo.org/records/3678171](https://zenodo.org/records/3678171) — s
 ```
 auralytics/
 ├── src/
-│   ├── preprocess.py   audio → log-mel spectrogram pipeline
+│   ├── preprocess.py   wav → log-mel spectrogram pipeline
 │   ├── dataset.py      PyTorch Dataset + DataLoader factory
 │   ├── model.py        convolutional autoencoder
-│   ├── train.py        training loop with checkpointing
+│   ├── train.py        training loop with early stopping + checkpointing
 │   ├── evaluate.py     AUC-ROC, pAUC, F1 evaluation
 │   └── utils.py        plotting, seeding, checkpointing
 │
 ├── notebooks/
 │   ├── 01_eda.ipynb          dataset inspection & spectrogram visualization
 │   ├── 02_preprocessing.ipynb
-│   ├── 03_training.ipynb     train on Google Colab (free GPU)
+│   ├── 03_training.ipynb     Colab-ready training walkthrough
 │   └── 04_evaluation.ipynb   AUC curves, score distributions, failure cases
 │
 ├── backend/
 │   ├── main.py         FastAPI — POST /predict, GET /health
-│   └── inference.py    model load + spectrogram → score pipeline
+│   └── inference.py    model load + audio → score pipeline
 │
 ├── frontend/
-│   ├── index.html      upload UI + score display
+│   ├── index.html      upload UI + score + spectrogram display
 │   ├── style.css
-│   └── app.js          fetch → backend, render spectrogram
+│   └── app.js          calls backend, renders results
 │
-├── data/               raw + processed audio (gitignored)
+├── data/               raw + processed audio (gitignored — download separately)
 ├── models/             trained .pth checkpoints (gitignored)
 └── results/            figures, logs, evaluation outputs
 ```
@@ -88,7 +78,7 @@ auralytics/
 
 ## Quickstart
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
 pip install -r requirements.txt
@@ -96,18 +86,15 @@ pip install -r requirements.txt
 
 ### 2. Download the dataset
 
-```bash
-# See data/README.md for full instructions
-# Download dev_data_fan.zip, dev_data_pump.zip, dev_data_valve.zip
-# from https://zenodo.org/records/3678171
-# Extract into data/raw/
-```
+See [`data/README.md`](data/README.md) for the download links and expected folder layout.
 
 ### 3. Preprocess audio
 
 ```bash
 python src/preprocess.py --machine_types fan pump valve
 ```
+
+Converts raw `.wav` files into normalized log-mel spectrograms (`.npy`) under `data/processed/`.
 
 ### 4. Explore the data
 
@@ -121,6 +108,8 @@ jupyter notebook notebooks/01_eda.ipynb
 python src/train.py --machine_type fan --epochs 50
 ```
 
+Saves the best checkpoint to `models/fan_best.pth`.
+
 ### 6. Evaluate
 
 ```bash
@@ -130,46 +119,32 @@ python src/evaluate.py --machine_type fan
 ### 7. Run the web demo
 
 ```bash
-# Backend
+# Terminal 1 — backend
 cd backend && uvicorn main:app --reload
 
-# Frontend — open frontend/index.html in browser
+# Terminal 2 — open the frontend
+open frontend/index.html   # or just double-click it
 ```
 
 ---
 
-## Evaluation Metrics
+## Evaluation
 
 Following the official DCASE 2020 Task 2 protocol:
 
 | Metric | Description |
 |--------|-------------|
-| **AUC-ROC** | Primary metric — threshold-free discrimination between normal and anomalous |
-| **pAUC** | Partial AUC over FPR 0–0.1, penalizes false alarms |
-| **F1** | At optimal threshold — balances precision and recall |
+| **AUC-ROC** | Primary — threshold-free discrimination between normal and anomalous |
+| **pAUC** | Partial AUC over FPR 0–0.1, penalizes false alarms in safety-critical settings |
+| **F1** | Reported at the threshold that maximizes it |
 
-Target: AUC > 0.75 on all three machine types.
-
----
-
-## Roadmap
-
-- [x] Repo structure and data setup
-- [x] Audio preprocessing pipeline (`preprocess.py`)
-- [x] PyTorch Dataset class (`dataset.py`)
-- [x] EDA notebook
-- [ ] Convolutional autoencoder (`model.py`)
-- [ ] Training loop (`train.py`)
-- [ ] Evaluation pipeline (`evaluate.py`)
-- [ ] FastAPI backend (`backend/`)
-- [ ] Frontend demo (`frontend/`)
-- [ ] Deployed live demo
+Target: AUC > 0.75 across all three machine types.
 
 ---
 
-## Built With
+## Tech Stack
 
-PyTorch · librosa · FastAPI · DCASE 2020
+PyTorch · librosa · FastAPI · Vanilla JS · DCASE 2020
 
 ---
 

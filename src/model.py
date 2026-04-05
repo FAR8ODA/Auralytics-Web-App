@@ -1,13 +1,128 @@
-# src/model.py
-# ──────────────────────────────────────────────────────────────────────────────
-# Convolutional Autoencoder for anomaly detection.
-#
-# Architecture:
-#   Encoder: Conv2d → ReLU → MaxPool (x3 layers) → bottleneck
-#   Decoder: ConvTranspose2d → ReLU (x3 layers) → reconstructed spectrogram
-#
-# Anomaly score = MSE(input_spectrogram, reconstructed_spectrogram)
-# High reconstruction error → anomalous clip
-#
-# TODO: implement
-# ──────────────────────────────────────────────────────────────────────────────
+"""
+src/model.py
+─────────────────────────────────────────────────────────────────────────────
+Convolutional Autoencoder for Auralytics.
+
+Architecture overview
+─────────────────────
+Input: (B, 1, 128, T)  — batch of log-mel spectrograms
+
+Encoder
+  Conv2d(1→32)  + BN + ReLU + MaxPool(2,2)   →  (B, 32, 64, T/2)
+  Conv2d(32→64) + BN + ReLU + MaxPool(2,2)   →  (B, 64, 32, T/4)
+  Conv2d(64→128)+ BN + ReLU + MaxPool(2,2)   →  (B, 128, 16, T/8)
+
+Decoder (Upsample + Conv avoids checkerboard artifacts from ConvTranspose2d)
+  Upsample(×2) + Conv2d(128→64) + BN + ReLU  →  (B, 64, 32, T/4)
+  Upsample(×2) + Conv2d(64→32)  + BN + ReLU  →  (B, 32, 64, T/2)
+  Upsample(×2) + Conv2d(32→1)                →  (B, 1, 128, T)  [cropped to match input]
+
+Anomaly score
+  MSE(input, reconstruction) averaged over (C, H, W) → scalar per clip.
+  Normal clips reconstruct accurately → low score.
+  Anomalous clips reconstruct poorly  → high score.
+─────────────────────────────────────────────────────────────────────────────
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class _EncoderBlock(nn.Module):
+    """Conv → BN → ReLU → MaxPool."""
+
+    def __init__(self, in_ch: int, out_ch: int, kernel: int = 3):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel, padding=kernel // 2, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class _DecoderBlock(nn.Module):
+    """Upsample(×2) → Conv → BN → ReLU."""
+
+    def __init__(self, in_ch: int, out_ch: int, kernel: int = 3, activation: bool = True):
+        super().__init__()
+        layers = [
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(in_ch, out_ch, kernel, padding=kernel // 2, bias=False),
+        ]
+        if activation:
+            layers += [nn.BatchNorm2d(out_ch), nn.ReLU(inplace=True)]
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class ConvAutoencoder(nn.Module):
+    """
+    Convolutional autoencoder for unsupervised anomaly detection.
+
+    Args:
+        base_ch : number of channels in the first encoder layer (default 32).
+                  Subsequent layers double: 32 → 64 → 128.
+    """
+
+    def __init__(self, base_ch: int = 32):
+        super().__init__()
+
+        # ── Encoder ──────────────────────────────────────────────────────────
+        self.enc1 = _EncoderBlock(1,          base_ch)       # /2
+        self.enc2 = _EncoderBlock(base_ch,    base_ch * 2)   # /4
+        self.enc3 = _EncoderBlock(base_ch * 2, base_ch * 4)  # /8
+
+        # ── Decoder ──────────────────────────────────────────────────────────
+        self.dec1 = _DecoderBlock(base_ch * 4, base_ch * 2)  # ×2
+        self.dec2 = _DecoderBlock(base_ch * 2, base_ch)      # ×2
+        self.dec3 = _DecoderBlock(base_ch, 1, activation=False)  # ×2 — no BN/ReLU on output
+
+    # ── Forward ──────────────────────────────────────────────────────────────
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        return self.enc3(self.enc2(self.enc1(x)))
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.dec3(self.dec2(self.dec1(z)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        z    = self.encode(x)
+        recon = self.decode(z)
+        # Crop to input size — MaxPool + Upsample on odd dims can add 1 pixel
+        recon = recon[:, :, : x.shape[2], : x.shape[3]]
+        return recon
+
+    # ── Anomaly score ─────────────────────────────────────────────────────────
+
+    def anomaly_score(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Per-clip reconstruction error (MSE), shape (B,).
+
+        Higher score = model struggled to reconstruct = likely anomalous.
+        Use with torch.no_grad() at inference time.
+        """
+        recon = self.forward(x)
+        # Mean over (C, H, W), one scalar per clip in the batch
+        return F.mse_loss(recon, x, reduction="none").mean(dim=(1, 2, 3))
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def count_parameters(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def __repr__(self) -> str:
+        return (
+            f"ConvAutoencoder(\n"
+            f"  encoder: 1→{self.enc1.block[0].out_channels}"
+            f"→{self.enc2.block[0].out_channels}"
+            f"→{self.enc3.block[0].out_channels}\n"
+            f"  decoder: mirrors encoder\n"
+            f"  params:  {self.count_parameters():,}\n)"
+        )
