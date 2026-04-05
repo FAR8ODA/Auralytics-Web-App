@@ -1,69 +1,176 @@
-# Auralytics
+# 🔊 Auralytics
 
-Acoustic anomaly detection for predictive maintenance.
+**Acoustic anomaly detection for predictive maintenance.**
 
-Auralytics is a machine-learning web app that listens to machine audio, detects abnormal operating behavior, and visualizes why the clip looks anomalous. The project is built around the DCASE 2020 Task 2 benchmark for unsupervised anomalous sound detection in machine condition monitoring.
+Auralytics listens to industrial machine audio and flags abnormal behavior before failure occurs. Built on the DCASE 2020 Task 2 benchmark, it trains a convolutional autoencoder on normal machine sounds — when a new clip reconstructs poorly, that reconstruction error is the anomaly signal.
 
-## Repository Purpose
+The project ships with a live web demo: upload a `.wav` clip, pick a machine type, and get back an anomaly score, a verdict, and a spectrogram visualization.
 
-This repository is structured to support the full pipeline:
+---
 
-- dataset setup and inspection
-- audio preprocessing and spectrogram generation
-- baseline and improved anomaly-detection models
-- evaluation and error analysis
-- a web demo for live presentation
+## Demo
 
-## Canonical Repository Layout
+> Upload a `.wav` → get an anomaly score + spectrogram explanation
 
-The folders below are the intended project structure:
+*(Demo link coming after model training — see roadmap)*
 
-```text
-Auralytics Web App/
-|-- backend/           # FastAPI inference service
-|-- data/              # Dataset instructions and local raw/processed data
-|-- docs/              # Roadmap, demo spec, and project notes
-|-- frontend/          # Presentation-facing frontend assets
-|-- models/            # Saved checkpoints (gitignored)
-|-- notebooks/         # Exploratory notebooks
-|-- results/           # Figures, logs, exported evaluation outputs
-|-- src/               # Training, preprocessing, dataset, and evaluation code
-|-- requirements.txt   # Core project dependencies
-`-- .gitignore
+---
+
+## How It Works
+
 ```
+raw audio (.wav)
+      │
+      ▼
+log-mel spectrogram  (128 mels, FFT 1024, hop 512, 16 kHz)
+      │
+      ▼
+convolutional autoencoder  (trained on normal clips only)
+      │
+      ▼
+reconstruction error  (MSE between input and output)
+      │
+      ▼
+anomaly score  →  NORMAL / ANOMALOUS verdict
+```
+
+High reconstruction error = the model has never seen sounds like this = likely anomalous.
+
+---
 
 ## Dataset
 
-We will start with the official DCASE 2020 Task 2 machine-condition-monitoring data and focus first on:
+[DCASE 2020 Task 2](https://dcase.community/challenge2020/task2-unsupervised-detection-of-anomalous-sounds) — Unsupervised Anomalous Sound Detection in Machine Condition Monitoring.
 
-- `fan`
-- `pump`
-- `valve`
+| Machine | Train (normal) | Test (normal + anomalous) |
+|---------|---------------|--------------------------|
+| Fan     | ~1 000        | ~400 + 400               |
+| Pump    | ~1 000        | ~400 + 400               |
+| Valve   | ~1 000        | ~400 + 400               |
 
-See [data/README.md](C:/Users/farbo/Desktop/355/Final%20Project-Machine%20Anamoly%20Detector/Auralytics%20Web%20App/data/README.md) for the expected dataset layout and download notes.
+Download: [zenodo.org/records/3678171](https://zenodo.org/records/3678171) — see [`data/README.md`](data/README.md) for setup.
 
-## Final Demo Vision
+---
 
-The demo should let a user:
+## Project Structure
 
-- upload a machine audio clip
-- select the machine type
-- receive an anomaly score and normal/anomalous verdict
-- view a spectrogram and highlighted suspicious region
-- compare against a known normal sample
+```
+auralytics/
+├── src/
+│   ├── preprocess.py   audio → log-mel spectrogram pipeline
+│   ├── dataset.py      PyTorch Dataset + DataLoader factory
+│   ├── model.py        convolutional autoencoder
+│   ├── train.py        training loop with checkpointing
+│   ├── evaluate.py     AUC-ROC, pAUC, F1 evaluation
+│   └── utils.py        plotting, seeding, checkpointing
+│
+├── notebooks/
+│   ├── 01_eda.ipynb          dataset inspection & spectrogram visualization
+│   ├── 02_preprocessing.ipynb
+│   ├── 03_training.ipynb     train on Google Colab (free GPU)
+│   └── 04_evaluation.ipynb   AUC curves, score distributions, failure cases
+│
+├── backend/
+│   ├── main.py         FastAPI — POST /predict, GET /health
+│   └── inference.py    model load + spectrogram → score pipeline
+│
+├── frontend/
+│   ├── index.html      upload UI + score display
+│   ├── style.css
+│   └── app.js          fetch → backend, render spectrogram
+│
+├── data/               raw + processed audio (gitignored)
+├── models/             trained .pth checkpoints (gitignored)
+└── results/            figures, logs, evaluation outputs
+```
 
-See [docs/demo_spec.md](C:/Users/farbo/Desktop/355/Final%20Project-Machine%20Anamoly%20Detector/Auralytics%20Web%20App/docs/demo_spec.md) for the intended presentation flow.
+---
 
-## Immediate Next Steps
+## Quickstart
 
-1. Download and unpack the DCASE data into `data/raw/`.
-2. Implement dataset indexing and audio preprocessing in `src/`.
-3. Train the baseline autoencoder.
-4. Add backend inference.
-5. Wire the frontend to the backend for the final live demo.
+### 1. Install dependencies
 
-## Notes On Current Local State
+```bash
+pip install -r requirements.txt
+```
 
-- `frontend/` is the canonical UI directory.
-- `backend/` is the canonical API directory.
-- `web/` and the malformed brace-named scratch directory are treated as legacy local scratch space and are intentionally ignored from Git tracking.
+### 2. Download the dataset
+
+```bash
+# See data/README.md for full instructions
+# Download dev_data_fan.zip, dev_data_pump.zip, dev_data_valve.zip
+# from https://zenodo.org/records/3678171
+# Extract into data/raw/
+```
+
+### 3. Preprocess audio
+
+```bash
+python src/preprocess.py --machine_types fan pump valve
+```
+
+### 4. Explore the data
+
+```bash
+jupyter notebook notebooks/01_eda.ipynb
+```
+
+### 5. Train (recommended: Google Colab free GPU)
+
+```bash
+python src/train.py --machine_type fan --epochs 50
+```
+
+### 6. Evaluate
+
+```bash
+python src/evaluate.py --machine_type fan
+```
+
+### 7. Run the web demo
+
+```bash
+# Backend
+cd backend && uvicorn main:app --reload
+
+# Frontend — open frontend/index.html in browser
+```
+
+---
+
+## Evaluation Metrics
+
+Following the official DCASE 2020 Task 2 protocol:
+
+| Metric | Description |
+|--------|-------------|
+| **AUC-ROC** | Primary metric — threshold-free discrimination between normal and anomalous |
+| **pAUC** | Partial AUC over FPR 0–0.1, penalizes false alarms |
+| **F1** | At optimal threshold — balances precision and recall |
+
+Target: AUC > 0.75 on all three machine types.
+
+---
+
+## Roadmap
+
+- [x] Repo structure and data setup
+- [x] Audio preprocessing pipeline (`preprocess.py`)
+- [x] PyTorch Dataset class (`dataset.py`)
+- [x] EDA notebook
+- [ ] Convolutional autoencoder (`model.py`)
+- [ ] Training loop (`train.py`)
+- [ ] Evaluation pipeline (`evaluate.py`)
+- [ ] FastAPI backend (`backend/`)
+- [ ] Frontend demo (`frontend/`)
+- [ ] Deployed live demo
+
+---
+
+## Built With
+
+PyTorch · librosa · FastAPI · DCASE 2020
+
+---
+
+*CPEN 355 Final Project — UBC Electrical and Computer Engineering*
