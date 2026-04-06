@@ -9,8 +9,8 @@ No anomalous data is used during training (fully unsupervised).
 Loss: MSE between input spectrogram and reconstruction.
 
 Usage:
-    python src/train.py --machine_type fan
-    python src/train.py --machine_type pump --epochs 60 --lr 1e-3 --batch_size 64
+    python -m src.train --machine_type fan
+    python -m src.train --machine_type pump --epochs 60 --lr 1e-3 --batch_size 64
 
 Outputs:
     models/{machine_type}_best.pth   ← best checkpoint by val loss
@@ -106,7 +106,7 @@ def train_model(
 
     # ── Optimizer + scheduler ────────────────────────────────────────────────
     optimizer = Adam(model.parameters(), lr=lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=4, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=4)
 
     # ── Training loop ─────────────────────────────────────────────────────────
     best_val_loss  = float("inf")
@@ -129,7 +129,7 @@ def train_model(
             best_val_loss = val_loss
             epochs_no_improve = 0
             save_checkpoint(model, optimizer, epoch, val_loss, ckpt_path)
-            tag = "✓ saved"
+            tag = "saved"
         else:
             epochs_no_improve += 1
             tag = f"  (no improve {epochs_no_improve}/{patience})"

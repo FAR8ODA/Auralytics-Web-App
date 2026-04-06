@@ -105,7 +105,7 @@ jupyter notebook notebooks/01_eda.ipynb
 ### 5. Train (recommended: Google Colab free GPU)
 
 ```bash
-python src/train.py --machine_type fan --epochs 50
+python -m src.train --machine_type fan --epochs 50
 ```
 
 Saves the best checkpoint to `models/fan_best.pth`.
@@ -113,7 +113,7 @@ Saves the best checkpoint to `models/fan_best.pth`.
 ### 6. Evaluate
 
 ```bash
-python src/evaluate.py --machine_type fan
+python -m src.evaluate --machine_type fan
 ```
 
 ### 7. Run the web demo
