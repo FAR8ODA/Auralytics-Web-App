@@ -207,7 +207,7 @@ def make_train_val_loaders(
     processed_dir: Path,
     machine_type:  str,
     batch_size:    int   = 512,
-    num_workers:   int   = 2,
+    num_workers:   int   = 0,
     val_fraction:  float = 0.1,
     seed:          int   = 42,
     n_frames:      int   = N_FRAMES,
@@ -244,15 +244,14 @@ def make_train_val_loaders(
     norm.std      = (train_data.std(axis=0) + 1e-8).astype(np.float32)
     print(f"  Normalizer fitted  (mean range: [{norm.mean.min():.3f}, {norm.mean.max():.3f}])")
 
-    # Rebuild with normalizer applied
-    normed_ds   = FrameDataset(processed_dir, machine_type, split="train",
-                               n_frames=n_frames, hop=hop, normalizer=norm)
-    normed_train, normed_val = random_split(normed_ds, [n_train, n_val],
-                                            generator=torch.Generator().manual_seed(seed))
+    # Reuse the already-built dataset instead of reloading every file again.
+    # This avoids a second expensive pass over >1M windows and is much more
+    # stable on Colab than rebuilding FrameDataset after fitting the normalizer.
+    raw_ds.normalizer = norm
 
-    train_loader = DataLoader(normed_train, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=True)
-    val_loader   = DataLoader(normed_val,   batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=True)
+    train_loader = DataLoader(train_raw, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=torch.cuda.is_available())
+    val_loader   = DataLoader(val_raw,   batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=torch.cuda.is_available())
 
     return train_loader, val_loader, norm
