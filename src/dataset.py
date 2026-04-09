@@ -1,143 +1,220 @@
-"""
-src/dataset.py
-─────────────────────────────────────────────────────────────────────────────
-PyTorch Dataset for Auralytics.
+"""PyTorch datasets and helpers for the Auralytics frame-level MLP autoencoder."""
 
-Loads pre-processed log-mel spectrograms (.npy) from data/processed/.
-Training set contains normal clips only (unsupervised setting).
-Test set contains both normal and anomalous clips with ground-truth labels.
+from __future__ import annotations
 
-Label convention:
-    0 → normal
-    1 → anomalous
-─────────────────────────────────────────────────────────────────────────────
-"""
-
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-
-def _label_from_filename(filename: str) -> int:
-    """
-    Parse DCASE filename convention.
-    Files starting with 'anomaly_' are labelled 1, everything else 0.
-    """
-    return 1 if filename.startswith("anomaly") else 0
+N_FRAMES = 5
+HOP = 1
+N_MELS = 128
+INPUT_DIM = N_MELS * N_FRAMES
+_ID_RE = re.compile(r"(id_\d\d)")
 
 
-class DCASEDataset(Dataset):
-    """
-    Dataset for a single machine type and split.
+def _label_from_filename(stem: str) -> int:
+    return 1 if stem.startswith("anomaly") else 0
 
-    Args:
-        processed_dir : path to data/processed/
-        machine_type  : one of 'fan', 'pump', 'valve'
-        split         : 'train' or 'test'
-        transform     : optional callable applied to the spectrogram tensor
-    """
 
+def extract_machine_id(stem: str) -> Optional[str]:
+    match = _ID_RE.search(stem)
+    return match.group(1) if match else None
+
+
+def _select_files(files: list[Path], machine_id: Optional[str]) -> list[Path]:
+    if machine_id is None:
+        return files
+    selected = [path for path in files if extract_machine_id(path.stem) == machine_id]
+    return selected
+
+
+def available_machine_ids(processed_dir: Path, machine_type: str, split: str = "train") -> list[str]:
+    split_dir = Path(processed_dir) / machine_type / split
+    files = sorted(split_dir.glob("*.npy"))
+    ids = sorted({extract_machine_id(path.stem) for path in files if extract_machine_id(path.stem)})
+    return ids
+
+
+def extract_windows(spec: np.ndarray, n_frames: int = N_FRAMES, hop: int = HOP) -> np.ndarray:
+    n_mels, total_frames = spec.shape
+    if n_mels != N_MELS:
+        raise ValueError(f"Expected {N_MELS} mel bins, got {n_mels}")
+    if total_frames < n_frames:
+        raise ValueError(f"Spectrogram has only {total_frames} frames, cannot extract windows of {n_frames}")
+    starts = range(0, total_frames - n_frames + 1, hop)
+    windows = np.stack([spec[:, start : start + n_frames].reshape(-1) for start in starts], axis=0)
+    return windows.astype(np.float32)
+
+
+class Normalizer:
+    def __init__(self) -> None:
+        self.mean: Optional[np.ndarray] = None
+        self.std: Optional[np.ndarray] = None
+
+    def fit_array(self, data: np.ndarray) -> "Normalizer":
+        self.mean = data.mean(axis=0).astype(np.float32)
+        self.std = (data.std(axis=0) + 1e-8).astype(np.float32)
+        return self
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        if self.mean is None or self.std is None:
+            raise RuntimeError("Normalizer must be fitted before transform()")
+        return ((x - self.mean) / self.std).astype(np.float32)
+
+    def save(self, path: Path) -> None:
+        if self.mean is None or self.std is None:
+            raise RuntimeError("Cannot save an unfitted normalizer")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(path, mean=self.mean, std=self.std)
+
+    @classmethod
+    def load(cls, path: Path) -> "Normalizer":
+        data = np.load(path)
+        norm = cls()
+        norm.mean = data["mean"]
+        norm.std = data["std"]
+        return norm
+
+
+class FrameDataset(Dataset):
     def __init__(
         self,
         processed_dir: Path,
         machine_type: str,
         split: str = "train",
-        transform=None,
-    ):
-        self.split_dir   = Path(processed_dir) / machine_type / split
-        self.transform   = transform
-        self.machine     = machine_type
-        self.split       = split
-
-        if not self.split_dir.exists():
+        machine_id: Optional[str] = None,
+        n_frames: int = N_FRAMES,
+        hop: int = HOP,
+        normalizer: Optional[Normalizer] = None,
+    ) -> None:
+        split_dir = Path(processed_dir) / machine_type / split
+        if not split_dir.exists():
             raise FileNotFoundError(
-                f"Processed data not found at {self.split_dir}. "
-                f"Run: python src/preprocess.py --machine_types {machine_type}"
+                f"Processed data not found at {split_dir}. Run: python -m src.preprocess --machine_types {machine_type}"
             )
 
-        self.files = sorted(self.split_dir.glob("*.npy"))
-        if not self.files:
-            raise RuntimeError(f"No .npy files found in {self.split_dir}")
+        files = sorted(split_dir.glob("*.npy"))
+        files = _select_files(files, machine_id)
+        if not files:
+            ids = available_machine_ids(processed_dir, machine_type, split=split)
+            hint = f" Available IDs: {', '.join(ids)}" if ids else ""
+            raise RuntimeError(f"No .npy files found in {split_dir} for machine_id={machine_id!r}.{hint}")
 
-        # Labels — 0 for training (all normal), parsed from name for test
-        self.labels = [_label_from_filename(f.stem) for f in self.files]
+        self.machine_type = machine_type
+        self.machine_id = machine_id
+        self.normalizer = normalizer
+        self.files = files
+        self.num_clips = len(files)
+        self._all = np.concatenate(
+            [extract_windows(np.load(path).astype(np.float32), n_frames=n_frames, hop=hop) for path in files],
+            axis=0,
+        )
 
-        # Sanity check: train split should have no anomalies
-        if split == "train":
-            n_anomalous = sum(self.labels)
-            if n_anomalous > 0:
-                print(f"[warn] {n_anomalous} anomalous clips found in train split — check your data layout")
+    def __len__(self) -> int:
+        return len(self._all)
 
-    # ── Dataset interface ─────────────────────────────────────────────────
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        window = self._all[idx]
+        if self.normalizer is not None:
+            window = self.normalizer.transform(window)
+        return torch.from_numpy(window), 0
+
+    @property
+    def input_dim(self) -> int:
+        return self._all.shape[1]
+
+
+class ClipDataset(Dataset):
+    def __init__(
+        self,
+        processed_dir: Path,
+        machine_type: str,
+        split: str = "test",
+        machine_id: Optional[str] = None,
+    ) -> None:
+        split_dir = Path(processed_dir) / machine_type / split
+        if not split_dir.exists():
+            raise FileNotFoundError(f"Processed data not found at {split_dir}")
+
+        files = sorted(split_dir.glob("*.npy"))
+        files = _select_files(files, machine_id)
+        if not files:
+            ids = available_machine_ids(processed_dir, machine_type, split=split)
+            hint = f" Available IDs: {', '.join(ids)}" if ids else ""
+            raise RuntimeError(f"No .npy files found in {split_dir} for machine_id={machine_id!r}.{hint}")
+
+        self.machine_type = machine_type
+        self.machine_id = machine_id
+        self.files = files
+        self.labels = [_label_from_filename(path.stem) for path in self.files]
 
     def __len__(self) -> int:
         return len(self.files)
 
-    def __getitem__(self, idx: int):
-        spec = np.load(self.files[idx])                     # (N_MELS, T)
-        spec = torch.from_numpy(spec).unsqueeze(0)          # (1, N_MELS, T)
+    def __getitem__(self, idx: int) -> Tuple[np.ndarray, int]:
+        spec = np.load(self.files[idx]).astype(np.float32)
+        return spec, self.labels[idx]
 
-        if self.transform:
-            spec = self.transform(spec)
-
-        label = self.labels[idx]
-        return spec, label
-
-    # ── Convenience helpers ───────────────────────────────────────────────
-
-    @property
-    def spec_shape(self):
-        """Return shape of a single spectrogram (C, H, W)."""
-        spec, _ = self[0]
-        return tuple(spec.shape)
-
-    def class_counts(self) -> dict:
-        """Return count of normal and anomalous clips."""
+    def class_counts(self) -> dict[str, int]:
         n_anomalous = sum(self.labels)
-        n_normal    = len(self.labels) - n_anomalous
-        return {"normal": n_normal, "anomalous": n_anomalous}
-
-    def __repr__(self) -> str:
-        counts = self.class_counts()
-        return (
-            f"DCASEDataset(machine={self.machine}, split={self.split}, "
-            f"n={len(self)}, normal={counts['normal']}, anomalous={counts['anomalous']})"
-        )
+        return {"normal": len(self.labels) - n_anomalous, "anomalous": n_anomalous}
 
 
-def make_dataloaders(
+def make_train_val_loaders(
     processed_dir: Path,
     machine_type: str,
-    batch_size: int = 32,
-    num_workers: int = 2,
+    machine_id: Optional[str] = None,
+    batch_size: int = 512,
+    num_workers: int = 0,
     val_fraction: float = 0.1,
     seed: int = 42,
+    n_frames: int = N_FRAMES,
+    hop: int = HOP,
 ):
-    """
-    Build train, validation, and test DataLoaders for one machine type.
-
-    Validation is carved out of the train split (normal clips only).
-    Test loader loads the full test split with labels for evaluation.
-
-    Returns:
-        train_loader, val_loader, test_loader
-    """
     from torch.utils.data import DataLoader, random_split
 
-    full_train = DCASEDataset(processed_dir, machine_type, split="train")
-    test_ds    = DCASEDataset(processed_dir, machine_type, split="test")
+    raw_ds = FrameDataset(
+        processed_dir,
+        machine_type,
+        split="train",
+        machine_id=machine_id,
+        n_frames=n_frames,
+        hop=hop,
+        normalizer=None,
+    )
 
-    # Train / val split
-    n_val   = max(1, int(len(full_train) * val_fraction))
-    n_train = len(full_train) - n_val
+    print(f"  Training clips        : {raw_ds.num_clips}")
+    print(f"  Total training windows: {len(raw_ds):,}  (input dim: {raw_ds.input_dim})")
+
+    n_val = max(1, int(len(raw_ds) * val_fraction))
+    n_train = len(raw_ds) - n_val
     generator = torch.Generator().manual_seed(seed)
-    train_ds, val_ds = random_split(full_train, [n_train, n_val], generator=generator)
+    train_subset, val_subset = random_split(raw_ds, [n_train, n_val], generator=generator)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=num_workers, pin_memory=True)
-    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
-    test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    print("  Fitting normalizer on training windows...")
+    train_data = raw_ds._all[train_subset.indices]
+    normalizer = Normalizer().fit_array(train_data)
+    print(f"  Normalizer fitted  (mean range: [{normalizer.mean.min():.3f}, {normalizer.mean.max():.3f}])")
 
-    return train_loader, val_loader, test_loader
+    raw_ds.normalizer = normalizer
+    train_loader = DataLoader(
+        train_subset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+    val_loader = DataLoader(
+        val_subset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+    return train_loader, val_loader, normalizer

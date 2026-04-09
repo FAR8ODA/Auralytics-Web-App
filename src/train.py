@@ -28,6 +28,7 @@ def scope_label(machine_type: str, machine_id: Optional[str] = None) -> str:
     return f"{machine_type} ({machine_id})" if machine_id else machine_type
 
 
+<<<<<<< HEAD
 def resolve_machine_ids(processed_dir: Path, machine_type: str, machine_id: Optional[str], all_ids: bool) -> list[Optional[str]]:
     ids = available_machine_ids(processed_dir, machine_type, split="train")
     if all_ids:
@@ -42,6 +43,8 @@ def resolve_machine_ids(processed_dir: Path, machine_type: str, machine_id: Opti
     return [machine_id]
 
 
+=======
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
 def run_epoch(model: nn.Module, loader, optimizer, device: torch.device, train: bool) -> float:
     model.train() if train else model.eval()
     total_loss = 0.0
@@ -138,8 +141,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Auralytics MLP AE - train")
     parser.add_argument("--machine_type", required=True, choices=["fan", "pump", "valve"])
     parser.add_argument("--machine_id", default=None, help="Optional machine ID such as id_00")
+<<<<<<< HEAD
     parser.add_argument("--all_ids", action="store_true", help="Train one model per available machine ID")
     parser.add_argument("--list_ids", action="store_true", help="Print available machine IDs and exit")
+=======
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
     parser.add_argument("--processed_dir", type=Path, default=PROCESSED_DIR)
     parser.add_argument("--models_dir", type=Path, default=MODELS_DIR)
     parser.add_argument("--results_dir", type=Path, default=RESULTS_DIR)
@@ -151,6 +157,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
+<<<<<<< HEAD
     ids = available_machine_ids(args.processed_dir, args.machine_type, split="train")
     if args.list_ids:
         print("Available IDs:")
@@ -175,6 +182,25 @@ def main() -> None:
             n_frames=args.n_frames,
             seed=args.seed,
         )
+=======
+    if args.machine_id and args.machine_id not in available_machine_ids(args.processed_dir, args.machine_type, split="train"):
+        ids = ", ".join(available_machine_ids(args.processed_dir, args.machine_type, split="train"))
+        raise SystemExit(f"Unknown machine_id {args.machine_id!r} for {args.machine_type}. Available IDs: {ids}")
+
+    train_model(
+        machine_type=args.machine_type,
+        machine_id=args.machine_id,
+        processed_dir=args.processed_dir,
+        models_dir=args.models_dir,
+        results_dir=args.results_dir,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        patience=args.patience,
+        n_frames=args.n_frames,
+        seed=args.seed,
+    )
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
 
 
 if __name__ == "__main__":

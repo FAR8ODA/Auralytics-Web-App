@@ -30,6 +30,7 @@ def scope_label(machine_type: str, machine_id: Optional[str] = None) -> str:
     return f"{machine_type}/{machine_id}" if machine_id else machine_type
 
 
+<<<<<<< HEAD
 def save_results_csv(results: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["machine", "auc", "pauc", "f1", "threshold", "n_normal", "n_anomalous"]
@@ -39,6 +40,8 @@ def save_results_csv(results: list[dict], path: Path) -> None:
         writer.writerows(results)
 
 
+=======
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
 def score_clip(
     spec: np.ndarray,
     model: torch.nn.Module,
@@ -113,9 +116,13 @@ def evaluate_machine(
     ckpt_path = models_dir / f"{tag}_mlp_best.pth"
     norm_path = models_dir / f"{tag}_normalizer.npz"
     if not ckpt_path.exists():
+<<<<<<< HEAD
         raise FileNotFoundError(
             f"No checkpoint at {ckpt_path}. Run: python -m src.train --machine_type {machine_type} --machine_id {machine_id}"
         )
+=======
+        raise FileNotFoundError(f"No checkpoint at {ckpt_path}. Run: python -m src.train --machine_type {machine_type} --machine_id {machine_id}")
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
     if not norm_path.exists():
         raise FileNotFoundError(f"No normalizer at {norm_path}. Re-run training for {scope_label(machine_type, machine_id)}")
 
@@ -197,12 +204,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Auralytics MLP AE - evaluate")
     parser.add_argument("--machine_type", nargs="+", default=["fan", "pump", "valve"], choices=["fan", "pump", "valve"])
     parser.add_argument("--machine_id", default=None, help="Optional machine ID such as id_00")
+<<<<<<< HEAD
     parser.add_argument("--all_ids", action="store_true", help="Evaluate every available ID for one machine type")
     parser.add_argument("--list_ids", action="store_true", help="Print available machine IDs and exit")
+=======
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
     parser.add_argument("--processed_dir", type=Path, default=PROCESSED_DIR)
     parser.add_argument("--models_dir", type=Path, default=MODELS_DIR)
     parser.add_argument("--results_dir", type=Path, default=RESULTS_DIR)
     parser.add_argument("--agg", default="mean", choices=["mean", "p95"], help="Window score aggregation method")
+<<<<<<< HEAD
     parser.add_argument("--save_csv", type=Path, default=None, help="Optional path to save a CSV summary of the results")
     parser.add_argument("--show_plots", action="store_true")
     args = parser.parse_args()
@@ -235,12 +246,31 @@ def main() -> None:
     for machine_type, machine_id in targets:
         print(f"\n{'=' * 50}")
         suffix = f" ({machine_id})" if machine_id else ""
+=======
+    parser.add_argument("--show_plots", action="store_true")
+    args = parser.parse_args()
+
+    if args.machine_id and len(args.machine_type) > 1:
+        raise SystemExit("--machine_id can only be used with one machine type at a time")
+    if args.machine_id and args.machine_id not in available_machine_ids(args.processed_dir, args.machine_type[0], split="test"):
+        ids = ", ".join(available_machine_ids(args.processed_dir, args.machine_type[0], split="test"))
+        raise SystemExit(f"Unknown machine_id {args.machine_id!r} for {args.machine_type[0]}. Available IDs: {ids}")
+
+    results = []
+    for machine_type in args.machine_type:
+        print(f"\n{'=' * 50}")
+        suffix = f" ({args.machine_id})" if args.machine_id else ""
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
         print(f"  Evaluating: {machine_type.upper()}{suffix}  (MLP AE)")
         print(f"{'=' * 50}")
         try:
             result = evaluate_machine(
                 machine_type=machine_type,
+<<<<<<< HEAD
                 machine_id=machine_id,
+=======
+                machine_id=args.machine_id,
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
                 processed_dir=args.processed_dir,
                 models_dir=args.models_dir,
                 results_dir=args.results_dir,
@@ -256,6 +286,7 @@ def main() -> None:
 
     if len(results) > 1:
         print_results_table(results)
+<<<<<<< HEAD
     if args.save_csv and results:
         save_results_csv(results, args.save_csv)
         print(f"\nSaved results CSV to {args.save_csv}")
@@ -263,6 +294,8 @@ def main() -> None:
         csv_path = args.results_dir / f"{args.machine_type[0]}_all_ids_summary.csv"
         save_results_csv(results, csv_path)
         print(f"\nSaved results CSV to {csv_path}")
+=======
+>>>>>>> 2cc3d3d199f09874a4c02662066b50dad471aa0c
     if results:
         print(f"\nPlots saved to {args.results_dir}/")
 
