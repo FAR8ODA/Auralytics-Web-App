@@ -82,7 +82,6 @@ def preprocess_split(
         try:
             waveform = load_audio(wav_path)
             spec     = compute_log_mel(waveform)
-            spec     = normalize(spec)
             np.save(out_path, spec)
             processed += 1
         except Exception as e:

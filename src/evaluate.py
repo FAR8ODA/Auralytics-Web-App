@@ -119,7 +119,7 @@ def evaluate_machine(
     if not norm_path.exists():
         raise FileNotFoundError(f"No normalizer at {norm_path}. Re-run training for {scope_label(machine_type, machine_id)}")
 
-    model = MLPAutoencoder(input_dim=INPUT_DIM, bottleneck=128).to(device)
+    model = MLPAutoencoder(input_dim=INPUT_DIM, bottleneck=8).to(device)
     load_checkpoint(ckpt_path, model, device=device)
     normalizer = Normalizer.load(norm_path)
 

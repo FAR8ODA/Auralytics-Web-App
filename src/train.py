@@ -70,6 +70,7 @@ def train_model(
     lr: float = 1e-3,
     patience: int = 8,
     n_frames: int = N_FRAMES,
+    bottleneck: int = 8,
     seed: int = 42,
 ) -> None:
     set_seed(seed)
@@ -95,7 +96,7 @@ def train_model(
     normalizer.save(norm_path)
     print(f"  Normalizer saved: {norm_path}")
 
-    model = MLPAutoencoder(input_dim=INPUT_DIM, bottleneck=128).to(device)
+    model = MLPAutoencoder(input_dim=INPUT_DIM, bottleneck=bottleneck).to(device)
     print(f"\n{model}")
 
     optimizer = Adam(model.parameters(), lr=lr)
@@ -148,6 +149,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--n_frames", type=int, default=5)
+    parser.add_argument("--bottleneck", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -173,6 +175,7 @@ def main() -> None:
             lr=args.lr,
             patience=args.patience,
             n_frames=args.n_frames,
+            bottleneck=args.bottleneck,
             seed=args.seed,
         )
 

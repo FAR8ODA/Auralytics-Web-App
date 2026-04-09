@@ -34,15 +34,13 @@ from src.dataset import INPUT_DIM
 
 
 class _Block(nn.Module):
-    """Linear → BatchNorm → ReLU → Dropout."""
+    """Linear → ReLU (no BatchNorm or Dropout — we want the AE to overfit to normal patterns)."""
 
-    def __init__(self, in_dim: int, out_dim: int, dropout: float = 0.1):
+    def __init__(self, in_dim: int, out_dim: int):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Linear(in_dim, out_dim, bias=False),
-            nn.BatchNorm1d(out_dim),
+            nn.Linear(in_dim, out_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -53,17 +51,27 @@ class MLPAutoencoder(nn.Module):
     """
     Frame-level MLP autoencoder.
 
+    Architecture mirrors the DCASE 2020 Task 2 baseline:
+        input → 128 → 128 → 128 → bottleneck → 128 → 128 → 128 → input
+
+    Key design choices:
+    - bottleneck=8 gives 80x compression (vs the old 128 which was only 5x).
+      A tiny bottleneck forces the encoder to keep only the most common normal
+      patterns, so anomalous frames that don't fit produce high reconstruction
+      error and become detectable.
+    - No BatchNorm or Dropout. These regularisers make the model generalise
+      too well — they allow anomalous inputs to be reconstructed cleanly too,
+      collapsing AUC toward 0.5.
+
     Args:
         input_dim  : flattened window size (N_MELS * N_FRAMES), default 640
-        bottleneck : dimension of the latent code, default 128
-        dropout    : dropout probability in encoder/decoder blocks
+        bottleneck : dimension of the latent code, default 8
     """
 
     def __init__(
         self,
-        input_dim:  int   = INPUT_DIM,
-        bottleneck: int   = 128,
-        dropout:    float = 0.1,
+        input_dim:  int = INPUT_DIM,
+        bottleneck: int = 8,
     ):
         super().__init__()
         self.input_dim  = input_dim
@@ -71,16 +79,18 @@ class MLPAutoencoder(nn.Module):
 
         # ── Encoder ──────────────────────────────────────────────────────────
         self.encoder = nn.Sequential(
-            _Block(input_dim,  512, dropout),
-            _Block(512,        256, dropout),
-            _Block(256,        bottleneck, dropout),
+            _Block(input_dim,  128),
+            _Block(128,        128),
+            _Block(128,        128),
+            _Block(128,        bottleneck),
         )
 
         # ── Decoder ──────────────────────────────────────────────────────────
         self.decoder = nn.Sequential(
-            _Block(bottleneck, 256, dropout),
-            _Block(256,        512, dropout),
-            nn.Linear(512, input_dim),   # no BN/ReLU/Dropout on output
+            _Block(bottleneck, 128),
+            _Block(128,        128),
+            _Block(128,        128),
+            nn.Linear(128, input_dim),   # no activation on output
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -102,7 +112,7 @@ class MLPAutoencoder(nn.Module):
         return (
             f"MLPAutoencoder(\n"
             f"  input_dim  : {self.input_dim}\n"
-            f"  encoder    : {self.input_dim} -> 512 -> 256 -> {self.bottleneck}\n"
-            f"  decoder    : {self.bottleneck} -> 256 -> 512 -> {self.input_dim}\n"
+            f"  encoder    : {self.input_dim} -> 128 -> 128 -> 128 -> {self.bottleneck}\n"
+            f"  decoder    : {self.bottleneck} -> 128 -> 128 -> 128 -> {self.input_dim}\n"
             f"  params     : {self.count_parameters():,}\n)"
         )
