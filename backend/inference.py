@@ -12,6 +12,9 @@ standardization, then global window normalization from the saved .npz file.
 
 from __future__ import annotations
 
+import os
+import threading
+
 import base64
 import io
 from pathlib import Path
@@ -23,6 +26,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "1")))
+try:
+    torch.set_num_interop_threads(int(os.getenv("TORCH_NUM_INTEROP_THREADS", "1")))
+except RuntimeError:
+    pass
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -105,6 +114,7 @@ class ModelRegistry:
         self.models_dir = Path(models_dir)
         self._models: dict[str, MLPAutoencoder] = {}
         self._normalizers: dict[str, dict[str, np.ndarray]] = {}
+        self._lock = threading.Lock()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Inference device: {self.device}")
 
@@ -119,36 +129,40 @@ class ModelRegistry:
         if machine in self._models:
             return
 
-        cfg = MODEL_CONFIGS[machine]
-        ckpt_path = self.models_dir / cfg["checkpoint"]
-        norm_path = self.models_dir / cfg["normalizer"]
+        with self._lock:
+            if machine in self._models:
+                return
 
-        if not ckpt_path.exists():
-            raise FileNotFoundError(
-                f"Missing {ckpt_path}. Copy {cfg['checkpoint']} into backend/models/."
+            cfg = MODEL_CONFIGS[machine]
+            ckpt_path = self.models_dir / cfg["checkpoint"]
+            norm_path = self.models_dir / cfg["normalizer"]
+
+            if not ckpt_path.exists():
+                raise FileNotFoundError(
+                    f"Missing {ckpt_path}. Copy {cfg['checkpoint']} into backend/models/."
+                )
+            if not norm_path.exists():
+                raise FileNotFoundError(
+                    f"Missing {norm_path}. Copy {cfg['normalizer']} into backend/models/."
+                )
+
+            model = MLPAutoencoder(input_dim=INPUT_DIM, bottleneck=8).to(self.device)
+            ckpt = torch.load(ckpt_path, map_location=self.device)
+            state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+            model.load_state_dict(state_dict)
+            model.eval()
+            self._models[machine] = model
+
+            norm_data = np.load(norm_path)
+            std = norm_data["std"].astype(np.float32)
+            self._normalizers[machine] = {
+                "mean": norm_data["mean"].astype(np.float32),
+                "std": np.maximum(std, 1e-8),
+            }
+            print(
+                f"  [{machine}] {cfg['label']} loaded "
+                f"(AUC {cfg['auc']:.3f}, threshold {cfg['threshold']})"
             )
-        if not norm_path.exists():
-            raise FileNotFoundError(
-                f"Missing {norm_path}. Copy {cfg['normalizer']} into backend/models/."
-            )
-
-        model = MLPAutoencoder(input_dim=INPUT_DIM, bottleneck=8).to(self.device)
-        ckpt = torch.load(ckpt_path, map_location=self.device)
-        state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-        model.load_state_dict(state_dict)
-        model.eval()
-        self._models[machine] = model
-
-        norm_data = np.load(norm_path)
-        std = norm_data["std"].astype(np.float32)
-        self._normalizers[machine] = {
-            "mean": norm_data["mean"].astype(np.float32),
-            "std": np.maximum(std, 1e-8),
-        }
-        print(
-            f"  [{machine}] {cfg['label']} loaded "
-            f"(AUC {cfg['auc']:.3f}, threshold {cfg['threshold']})"
-        )
 
     def get(self, machine: str):
         self.load(machine)

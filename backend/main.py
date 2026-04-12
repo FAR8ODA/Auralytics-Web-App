@@ -7,9 +7,11 @@ Endpoints:
 """
 
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from inference import MODEL_CONFIGS, ModelRegistry, predict
 
@@ -95,7 +97,17 @@ async def predict_endpoint(
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty file received.")
 
+    started = perf_counter()
+    print(f"Predict start: machine={machine}, file={file.filename}, bytes={len(audio_bytes)}")
     try:
-        return predict(audio_bytes, machine, registry)
+        result = await run_in_threadpool(predict, audio_bytes, machine, registry)
+        elapsed = perf_counter() - started
+        print(
+            f"Predict done: machine={machine}, verdict={result['verdict']}, "
+            f"score={result['score']}, elapsed={elapsed:.2f}s"
+        )
+        return result
     except Exception as exc:
+        elapsed = perf_counter() - started
+        print(f"Predict failed: machine={machine}, elapsed={elapsed:.2f}s, error={exc}")
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}") from exc
