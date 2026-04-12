@@ -11,7 +11,6 @@ from time import perf_counter
 
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.concurrency import run_in_threadpool
 
 from inference import MODEL_CONFIGS, ModelRegistry, predict
 
@@ -100,7 +99,7 @@ async def predict_endpoint(
     started = perf_counter()
     print(f"Predict start: machine={machine}, file={file.filename}, bytes={len(audio_bytes)}")
     try:
-        result = await run_in_threadpool(predict, audio_bytes, machine, registry)
+        result = predict(audio_bytes, machine, registry)
         elapsed = perf_counter() - started
         print(
             f"Predict done: machine={machine}, verdict={result['verdict']}, "
