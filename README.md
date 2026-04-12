@@ -1,151 +1,108 @@
-# 🔊 Auralytics
+﻿# Auralytics
 
-**Acoustic anomaly detection for predictive maintenance.**
+Acoustic anomaly detection for industrial machine monitoring. Auralytics trains unsupervised autoencoders on normal machine audio, then flags clips whose reconstruction error looks abnormal. The final project includes a working web demo: choose a machine, upload a `.wav`, and get a normal/anomalous verdict with spectrogram and reconstruction-error visuals.
 
-Auralytics listens to industrial machine audio and flags abnormal behavior before failure occurs. A convolutional autoencoder is trained on normal machine sounds — when a new clip reconstructs poorly, that reconstruction error is the anomaly signal. The project ships with a live web demo: upload a `.wav` clip, pick a machine type, and get back an anomaly score and a spectrogram visualization.
+## Final Result
 
----
+The final system uses per-machine-ID frame-level MLP autoencoders. This was the turning point: the early whole-spectrogram convolutional autoencoder reconstructed normal and anomalous clips too similarly, while the per-ID MLP learned tighter normal operating patterns.
+
+| Demo machine | Selected ID | AUC | pAUC | F1 | Threshold |
+|---|---:|---:|---:|---:|---:|
+| Fan | id_06 | 0.879 | 0.419 | 0.945 | 0.44144 |
+| Pump | id_04 | 0.971 | 0.851 | 0.913 | 0.67290 |
+| Valve | id_04 | 0.763 | 0.126 | 0.814 | 0.32718 |
+
+Overall mean AUC across all evaluated IDs is about 0.726. Full per-ID tables and plots are in [docs/final_results.md](docs/final_results.md) and [results/per_id_v2](results/per_id_v2/).
+
+## Result Visuals
+
+| Fan id_06 | Pump id_04 | Valve id_04 |
+|---|---|---|
+| ![Fan score distribution](results/per_id_v2/fan_id_06_mlp_score_dist.png) | ![Pump score distribution](results/per_id_v2/pump_id_04_mlp_score_dist.png) | ![Valve score distribution](results/per_id_v2/valve_id_04_mlp_score_dist.png) |
+| ![Fan ROC](results/per_id_v2/fan_id_06_mlp_roc.png) | ![Pump ROC](results/per_id_v2/pump_id_04_mlp_roc.png) | ![Valve ROC](results/per_id_v2/valve_id_04_mlp_roc.png) |
 
 ## How It Works
 
-```
-raw audio (.wav)
-      │
-      ▼
-log-mel spectrogram  (128 mels · FFT 1024 · hop 512 · 16 kHz)
-      │
-      ▼
-convolutional autoencoder  (trained on normal clips only)
-      │
-      ▼
-reconstruction error (MSE)
-      │
-      ▼
-anomaly score  ──►  NORMAL / ANOMALOUS verdict
+```text
+raw wav audio
+  -> log-mel spectrogram, 128 mel bins, 16 kHz, no per-clip standardization
+  -> sliding 5-frame windows, flattened to 640 features
+  -> global training-window normalization per machine ID
+  -> MLP autoencoder reconstruction
+  -> mean window MSE as anomaly score
+  -> threshold comparison for NORMAL / ANOMALOUS verdict
 ```
 
-High reconstruction error means the model has never seen sounds like this — likely anomalous.
+The preprocessing detail matters. We preserve absolute log-mel scale with `librosa.power_to_db(..., ref=1.0)`. Per-clip normalization was intentionally removed because it made normal and anomalous clips statistically too similar.
 
----
+## Web Demo
 
-## Dataset
+Backend:
 
-[DCASE 2020 Task 2](https://dcase.community/challenge2020/task2-unsupervised-detection-of-anomalous-sounds) — Unsupervised Anomalous Sound Detection in Machine Condition Monitoring.
+```bash
+cd backend
+py -3 -m pip install -r requirements.txt
+py -3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-| Machine | Train (normal) | Test normal | Test anomalous |
-|---------|---------------|-------------|----------------|
-| Fan     | 3 675         | 400         | 1 475          |
-| Pump    | 3 349         | 400         | 456            |
-| Valve   | 3 291         | 400         | 479            |
+Frontend:
 
-Download: [zenodo.org/records/3678171](https://zenodo.org/records/3678171) — see [`data/README.md`](data/README.md) for setup instructions.
+```bash
+cd frontend
+py -3 -m http.server 5500
+```
 
----
+Open `http://localhost:5500`, select a machine, upload a DCASE `.wav`, and run detection.
+
+Backend endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Confirms API is alive and models are loaded |
+| `GET /machines` | Returns available demo machines, AUCs, and thresholds |
+| `POST /predict` | Accepts `file` + `machine`, returns score, verdict, spectrogram, and error map |
+
+## Training and Evaluation
+
+Preprocess raw DCASE audio:
+
+```bash
+python -m src.preprocess --machine_types fan pump valve --data_dir data/raw --out_dir data/processed_v2
+```
+
+Train one per-ID model:
+
+```bash
+python -m src.train --machine_type fan --machine_id id_06 --epochs 120 --batch_size 512 --processed_dir data/processed_v2 --models_dir models_per_id_v2 --results_dir results/per_id_v2
+```
+
+Evaluate all IDs for one machine:
+
+```bash
+python -m src.evaluate --machine_type fan --all_ids --processed_dir data/processed_v2 --models_dir models_per_id_v2 --results_dir results/per_id_v2 --save_csv results/per_id_v2/fan_all_ids_summary.csv
+```
 
 ## Project Structure
 
-```
-auralytics/
-├── src/
-│   ├── preprocess.py   wav → log-mel spectrogram pipeline
-│   ├── dataset.py      PyTorch Dataset + DataLoader factory
-│   ├── model.py        convolutional autoencoder
-│   ├── train.py        training loop with early stopping + checkpointing
-│   ├── evaluate.py     AUC-ROC, pAUC, F1 evaluation
-│   └── utils.py        plotting, seeding, checkpointing
-│
-├── notebooks/
-│   ├── 01_eda.ipynb          dataset inspection & spectrogram visualization
-│   ├── 02_preprocessing.ipynb
-│   ├── 03_training.ipynb     Colab-ready training walkthrough
-│   └── 04_evaluation.ipynb   AUC curves, score distributions, failure cases
-│
-├── backend/
-│   ├── main.py         FastAPI — POST /predict, GET /health
-│   └── inference.py    model load + audio → score pipeline
-│
-├── frontend/
-│   ├── index.html      upload UI + score + spectrogram display
-│   ├── style.css
-│   └── app.js          calls backend, renders results
-│
-├── data/               raw + processed audio (gitignored — download separately)
-├── models/             trained .pth checkpoints (gitignored)
-└── results/            figures, logs, evaluation outputs
+```text
+backend/              FastAPI demo backend
+backend/models/       Selected demo checkpoints and normalizers
+frontend/             Static web UI for the live demo
+src/                  Preprocessing, datasets, model, train, evaluate code
+notebooks/            EDA/training/evaluation notebooks
+data/                 Raw and processed datasets, gitignored
+results/per_id_v2/    Final CSV summaries and result plots
+docs/                 Report-ready notes and final result summary
 ```
 
----
+## Dataset
 
-## Quickstart
+Dataset: DCASE 2020 Task 2, unsupervised detection of anomalous sounds for machine condition monitoring.
 
-### 1. Install
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Download the dataset
-
-See [`data/README.md`](data/README.md) for the download links and expected folder layout.
-
-### 3. Preprocess audio
-
-```bash
-python src/preprocess.py --machine_types fan pump valve
-```
-
-Converts raw `.wav` files into normalized log-mel spectrograms (`.npy`) under `data/processed/`.
-
-### 4. Explore the data
-
-```bash
-jupyter notebook notebooks/01_eda.ipynb
-```
-
-### 5. Train (recommended: Google Colab free GPU)
-
-```bash
-python -m src.train --machine_type fan --epochs 50
-```
-
-Saves the best checkpoint to `models/fan_best.pth`.
-
-### 6. Evaluate
-
-```bash
-python -m src.evaluate --machine_type fan
-```
-
-### 7. Run the web demo
-
-```bash
-# Terminal 1 — backend
-cd backend && uvicorn main:app --reload
-
-# Terminal 2 — open the frontend
-open frontend/index.html   # or just double-click it
-```
-
----
-
-## Evaluation
-
-Following the official DCASE 2020 Task 2 protocol:
-
-| Metric | Description |
-|--------|-------------|
-| **AUC-ROC** | Primary — threshold-free discrimination between normal and anomalous |
-| **pAUC** | Partial AUC over FPR 0–0.1, penalizes false alarms in safety-critical settings |
-| **F1** | Reported at the threshold that maximizes it |
-
-Target: AUC > 0.75 across all three machine types.
-
----
+Raw and processed audio are not committed to git. See [data/README.md](data/README.md) for the expected layout.
 
 ## Tech Stack
 
-PyTorch · librosa · FastAPI · Vanilla JS · DCASE 2020
+PyTorch, librosa, scikit-learn, FastAPI, Matplotlib, vanilla HTML/CSS/JavaScript.
 
----
-
-*CPEN 355 Final Project — UBC Electrical and Computer Engineering*
+CPEN 355 Final Project.

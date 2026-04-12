@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -16,23 +16,35 @@ env/
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# Data - never commit raw audio
-data/raw/
-data/processed/
+# Data - never commit raw/generated datasets
+/data/raw/
+/data/processed/
+/data/processed_v2/
 *.wav
 *.mp3
 *.flac
+*.zip
 
-# Model weights - too large for git
-models/*.pth
-models/*.pt
-models/*.ckpt
+# Training checkpoints outside the demo backend
+/models/*.pth
+/models/*.pt
+/models/*.ckpt
+/models/*.npz
+
+# The selected backend demo models are intentionally allowed.
+!backend/models/
+!backend/models/*.pth
+!backend/models/*.npz
+!backend/models/README.md
 
 # Results / outputs
-results/figures/
-results/logs/
+/results/figures/
+/results/logs/
+/results/*.png
 !results/figures/.gitkeep
 !results/logs/.gitkeep
+!results/per_id_v2/
+!results/per_id_v2/**
 
 # Environment
 .env
@@ -46,6 +58,5 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Legacy local scratch space to keep GitHub clean
-web/
-\{data,notebooks,src,models,results,web/
+# Legacy local scratch space
+/web/
