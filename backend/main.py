@@ -1,4 +1,4 @@
-﻿"""FastAPI backend for the Auralytics demo.
+"""FastAPI backend for the Auralytics demo.
 
 Endpoints:
 - GET /health: liveness check
@@ -33,13 +33,27 @@ registry = ModelRegistry(MODELS_DIR)
 @app.on_event("startup")
 async def startup() -> None:
     print("\nAuralytics backend starting...")
-    registry.load_all()
-    print("All models loaded. Ready.\n")
+    print("Model registry ready. Models load lazily on first prediction.\n")
+
+
+@app.get("/")
+def root() -> dict:
+    return {
+        "service": "Auralytics API",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health",
+        "machines": "/machines",
+    }
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "models_loaded": list(MODEL_CONFIGS.keys())}
+    return {
+        "status": "ok",
+        "available_models": list(MODEL_CONFIGS.keys()),
+        "loaded_models": registry.loaded_models(),
+    }
 
 
 @app.get("/machines")
