@@ -3,38 +3,576 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Auralytics - Machine Anomaly Detector</title>
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <title>Auralytics — Acoustic Anomaly Detection</title>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
-    /* ── Variables ─────────────────────────────────────── */
+    /* ── Variables ──────────────────────────────────────────────────────── */
     :root {
-      --bg:        #090909;
-      --surface:   #131313;
-      --surface2:  #1c1c1c;
-      --border:    #272727;
+      --bg:        #080808;
+      --surface:   #111111;
+      --surface2:  #181818;
+      --border:    #242424;
+      --border2:   #2e2e2e;
       --amber:     #f59e0b;
-      --amber-dim: #7c4f08;
-      --text:      #e8e8e8;
-      --muted:     #555;
+      --amber2:    #fbbf24;
+      --amber-dim: rgba(245,158,11,0.12);
+      --amber-glow:rgba(245,158,11,0.25);
+      --safe:      #10b981;
+      --safe-dim:  rgba(16,185,129,0.12);
       --danger:    #ef4444;
-      --safe:      #34d399;
-      --radius:    8px;
+      --danger-dim:rgba(239,68,68,0.12);
+      --text:      #e2e2e2;
+      --muted:     #555;
+      --muted2:    #3a3a3a;
+      --mono:      'JetBrains Mono', monospace;
+      --display:   'Barlow Condensed', sans-serif;
     }
 
-    /* ── Reset & Base ──────────────────────────────────── */
+    /* ── Reset ──────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Syne', sans-serif;
+      font-family: var(--display);
+      font-weight: 400;
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      overflow-x: hidden;
     }
 
-    /* ── Header ────────────────────────────────────────── */
+    /* ── Grid noise texture overlay ─────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(rgba(245,158,11,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(245,158,11,0.02) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .wrap { position: relative; z-index: 1; max-width: 900px; margin: 0 auto; padding: 0 24px 80px; }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
     header {
+      padding: 48px 0 40px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 48px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+    }
+    .logo-block {}
+    .logo-eyebrow {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--amber);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .logo-title {
+      font-family: var(--display);
+      font-size: 52px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      color: #fff;
+    }
+    .logo-title span { color: var(--amber); }
+    .logo-sub {
+      font-size: 14px;
+      font-weight: 300;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      margin-top: 8px;
+    }
+    .header-badge {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--amber);
+      border: 1px solid var(--amber-dim);
+      background: var(--amber-dim);
+      padding: 4px 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    /* ── Section titles ─────────────────────────────────────────────────── */
+    .section-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--amber);
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Machine selector ───────────────────────────────────────────────── */
+    .machine-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 40px;
+    }
+    .machine-card {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 18px 20px;
+      cursor: pointer;
+      transition: border-color .15s, background .15s, transform .1s;
+      position: relative;
+      overflow: hidden;
+    }
+    .machine-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--amber);
+      transform: scaleX(0);
+      transition: transform .15s;
+    }
+    .machine-card:hover { border-color: var(--border2); background: var(--surface2); }
+    .machine-card:hover::before { transform: scaleX(1); }
+    .machine-card.active {
+      border-color: var(--amber);
+      background: var(--amber-dim);
+    }
+    .machine-card.active::before { transform: scaleX(1); }
+    .machine-icon {
+      font-size: 22px;
+      margin-bottom: 10px;
+      display: block;
+    }
+    .machine-name {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #fff;
+      margin-bottom: 2px;
+    }
+    .machine-id {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .machine-auc {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .auc-bar-track {
+      flex: 1;
+      height: 3px;
+      background: var(--muted2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .auc-bar-fill {
+      height: 100%;
+      background: var(--amber);
+      border-radius: 2px;
+      transition: width .4s;
+    }
+    .auc-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--amber2);
+      white-space: nowrap;
+    }
+
+    /* ── Upload zone ────────────────────────────────────────────────────── */
+    .upload-zone {
+      border: 1px dashed var(--border2);
+      background: var(--surface);
+      padding: 48px 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+      margin-bottom: 24px;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag { border-color: var(--amber); background: var(--amber-dim); }
+    .upload-zone input { display: none; }
+    .upload-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      display: block;
+    }
+    .upload-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+    .upload-sub {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .upload-filename {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--amber);
+      margin-top: 12px;
+      display: none;
+    }
+    .upload-filename.show { display: block; }
+
+    /* ── Analyze button ─────────────────────────────────────────────────── */
+    .btn-analyze {
       width: 100%;
-      max-width: 1000px;
-      padding: 2rem 2
+      background: var(--amber);
+      color: #000;
+      border: none;
+      padding: 18px;
+      font-family: var(--display);
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background .15s, transform .1s;
+      margin-bottom: 48px;
+    }
+    .btn-analyze:hover:not(:disabled) { background: var(--amber2); }
+    .btn-analyze:active:not(:disabled) { transform: scale(0.995); }
+    .btn-analyze:disabled { background: var(--muted2); color: var(--muted); cursor: not-allowed; }
+
+    /* ── Results ────────────────────────────────────────────────────────── */
+    #results { display: none; }
+    #results.show { display: block; }
+
+    /* ── Loading bar ────────────────────────────────────────────────────── */
+    .loading-bar {
+      height: 2px;
+      background: var(--amber);
+      width: 0%;
+      transition: width .3s;
+      margin-bottom: 40px;
+      display: none;
+    }
+    .loading-bar.active { display: block; animation: load-pulse 1.5s ease-in-out infinite; }
+    @keyframes load-pulse {
+      0%   { width: 0%; opacity: 1; }
+      70%  { width: 90%; opacity: 1; }
+      100% { width: 90%; opacity: 0.4; }
+    }
+
+    /* ── Verdict card ───────────────────────────────────────────────────── */
+    .verdict-card {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      animation: slide-up .3s ease;
+    }
+    @keyframes slide-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .verdict-card.normal  { border-color: var(--safe);   background: var(--safe-dim); }
+    .verdict-card.anomaly { border-color: var(--danger);  background: var(--danger-dim); }
+
+    .verdict-left {}
+    .verdict-badge {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .verdict-card.normal  .verdict-badge  { color: var(--safe); }
+    .verdict-card.anomaly .verdict-badge  { color: var(--danger); }
+    .verdict-machine {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .verdict-right { text-align: right; }
+    .score-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .score-value {
+      font-family: var(--mono);
+      font-size: 32px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1;
+    }
+    .score-threshold {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* ── Score gauge ────────────────────────────────────────────────────── */
+    .gauge-row {
+      margin-bottom: 24px;
+      animation: slide-up .4s ease .05s both;
+    }
+    .gauge-track {
+      height: 8px;
+      background: var(--muted2);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .gauge-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width .6s cubic-bezier(.4,0,.2,1);
+      width: 0%;
+    }
+    .gauge-fill.normal  { background: var(--safe); }
+    .gauge-fill.anomaly { background: var(--danger); }
+    .gauge-labels {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    /* ── Spectrogram ────────────────────────────────────────────────────── */
+    .spec-block {
+      margin-bottom: 24px;
+      animation: slide-up .4s ease .1s both;
+    }
+    .spec-block img, .spec-block .err-img {
+      width: 100%;
+      display: block;
+      border: 1px solid var(--border);
+    }
+
+    /* ── Stats grid ─────────────────────────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 40px;
+      animation: slide-up .4s ease .15s both;
+    }
+    .stat-card {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      padding: 16px;
+    }
+    .stat-key {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .stat-val {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .stat-val.amber { color: var(--amber); }
+
+    /* ── Error section ──────────────────────────────────────────────────── */
+    .error-msg {
+      border: 1px solid var(--danger);
+      background: var(--danger-dim);
+      padding: 16px 20px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--danger);
+      margin-bottom: 24px;
+      display: none;
+    }
+    .error-msg.show { display: block; }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* ── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .machine-grid  { grid-template-columns: 1fr; }
+      .stats-grid    { grid-template-columns: repeat(2, 1fr); }
+      .logo-title    { font-size: 36px; }
+      header         { flex-direction: column; align-items: flex-start; gap: 16px; }
+      .verdict-card  { flex-direction: column; gap: 16px; }
+      .verdict-right { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header>
+    <div class="logo-block">
+      <div class="logo-eyebrow">Industrial AI · CPEN 355</div>
+      <div class="logo-title">AURA<span>LYTICS</span></div>
+      <div class="logo-sub">Acoustic Anomaly Detection for Predictive Maintenance</div>
+    </div>
+    <div>
+      <div class="header-badge">MLP Autoencoder</div>
+      <div class="header-badge" style="margin-top:4px;">DCASE 2020 Task 2</div>
+    </div>
+  </header>
+
+  <!-- Machine selector -->
+  <div class="section-label">01 · Select Machine Type</div>
+  <div class="machine-grid">
+    <div class="machine-card active" data-machine="fan">
+      <span class="machine-icon">🌀</span>
+      <div class="machine-name">Fan</div>
+      <div class="machine-id">id_06 · best performing</div>
+      <div class="machine-auc">
+        <div class="auc-bar-track"><div class="auc-bar-fill" style="width:87.9%"></div></div>
+        <div class="auc-label">AUC 0.879</div>
+      </div>
+    </div>
+    <div class="machine-card" data-machine="pump">
+      <span class="machine-icon">⚙️</span>
+      <div class="machine-name">Pump</div>
+      <div class="machine-id">id_04 · best performing</div>
+      <div class="machine-auc">
+        <div class="auc-bar-track"><div class="auc-bar-fill" style="width:97.1%"></div></div>
+        <div class="auc-label">AUC 0.971</div>
+      </div>
+    </div>
+    <div class="machine-card" data-machine="valve">
+      <span class="machine-icon">🔧</span>
+      <div class="machine-name">Valve</div>
+      <div class="machine-id">id_04 · best performing</div>
+      <div class="machine-auc">
+        <div class="auc-bar-track"><div class="auc-bar-fill" style="width:76.3%"></div></div>
+        <div class="auc-label">AUC 0.763</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload -->
+  <div class="section-label">02 · Upload Audio Clip</div>
+  <div class="upload-zone" id="dropzone">
+    <input type="file" id="fileInput" accept=".wav,audio/wav" />
+    <span class="upload-icon">🎙</span>
+    <div class="upload-title">Drop a .wav file here</div>
+    <div class="upload-sub">or click to browse · 10 seconds · 16 kHz · mono</div>
+    <div class="upload-filename" id="filename"></div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-msg" id="errorMsg"></div>
+
+  <!-- Analyze -->
+  <div class="section-label">03 · Run Detection</div>
+  <button class="btn-analyze" id="analyzeBtn" disabled>Analyze Clip</button>
+
+  <!-- Loading bar -->
+  <div class="loading-bar" id="loadingBar"></div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="section-label">04 · Results</div>
+
+    <!-- Verdict -->
+    <div class="verdict-card" id="verdictCard">
+      <div class="verdict-left">
+        <div class="verdict-badge" id="verdictText">—</div>
+        <div class="verdict-machine" id="verdictMachine">—</div>
+      </div>
+      <div class="verdict-right">
+        <div class="score-label">Anomaly Score</div>
+        <div class="score-value" id="scoreValue">—</div>
+        <div class="score-threshold" id="scoreThreshold">—</div>
+      </div>
+    </div>
+
+    <!-- Gauge -->
+    <div class="gauge-row">
+      <div class="gauge-track">
+        <div class="gauge-fill" id="gaugeFill"></div>
+      </div>
+      <div class="gauge-labels">
+        <span>0.0</span>
+        <span id="gaugeThresholdLabel">threshold</span>
+        <span id="gaugeMax">—</span>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-key">Machine</div>
+        <div class="stat-val amber" id="statMachine">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-key">Model AUC</div>
+        <div class="stat-val amber" id="statAuc">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-key">Threshold</div>
+        <div class="stat-val" id="statThreshold">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-key">Score</div>
+        <div class="stat-val" id="statScore">—</div>
+      </div>
+    </div>
+
+    <!-- Spectrogram -->
+    <div class="spec-block">
+      <div class="section-label" style="margin-bottom:12px;">Log-Mel Spectrogram</div>
+      <img id="specImg" src="" alt="Spectrogram" />
+    </div>
+
+    <!-- Error map -->
+    <div class="spec-block">
+      <div class="section-label" style="margin-bottom:12px;">Reconstruction Error Map</div>
+      <img id="errorMapImg" src="" alt="Error map" class="err-img" />
+    </div>
+  </div>
+
+  <footer>
+    <span>AURALYTICS · CPEN 355 · UBC ECE</span>
+    <span>Frame-level MLP Autoencoder · DCASE 2020 Task 2</span>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
