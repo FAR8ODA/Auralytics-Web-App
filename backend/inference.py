@@ -182,16 +182,30 @@ def load_audio_bytes(audio_bytes: bytes) -> np.ndarray:
     return wave[:target_len].astype(np.float32)
 
 
+_MEL_FILTERBANK = librosa.filters.mel(
+    sr=SAMPLE_RATE,
+    n_fft=N_FFT,
+    n_mels=N_MELS,
+).astype(np.float32)
+_HANN_WINDOW = (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(N_FFT) / N_FFT)).astype(np.float32)
+
+
 def compute_log_mel(wave: np.ndarray) -> np.ndarray:
-    """Compute the same raw log-mel dB features used during v2 training."""
-    mel = librosa.feature.melspectrogram(
-        y=wave,
-        sr=SAMPLE_RATE,
-        n_mels=N_MELS,
-        n_fft=N_FFT,
-        hop_length=HOP_LENGTH,
+    """Compute training-matched log-mel dB features without Render-time melspectrogram overhead."""
+    padded = np.pad(wave.astype(np.float32), (N_FFT // 2, N_FFT // 2), mode="constant")
+    n_frames = 1 + (len(padded) - N_FFT) // HOP_LENGTH
+    frame_stride = padded.strides[0]
+    frames = np.lib.stride_tricks.as_strided(
+        padded,
+        shape=(n_frames, N_FFT),
+        strides=(HOP_LENGTH * frame_stride, frame_stride),
+        writeable=False,
     )
+    spectrum = np.fft.rfft(frames * _HANN_WINDOW[None, :], n=N_FFT, axis=1)
+    power = (np.abs(spectrum) ** 2).T.astype(np.float32)
+    mel = np.maximum(_MEL_FILTERBANK @ power, 1e-10)
     return librosa.power_to_db(mel, ref=1.0).astype(np.float32)
+
 
 def extract_windows(spec: np.ndarray) -> np.ndarray:
     """Flatten sliding 5-frame mel windows into shape (num_windows, 640)."""
