@@ -17,12 +17,14 @@ import threading
 
 import base64
 import io
+import struct
+import zlib
 from pathlib import Path
 from typing import Literal
 
 import librosa
-import matplotlib
 import numpy as np
+import soundfile as sf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,8 +35,6 @@ try:
 except RuntimeError:
     pass
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 SAMPLE_RATE = 16_000
 N_MELS = 128
@@ -170,13 +170,16 @@ class ModelRegistry:
 
 
 def load_audio_bytes(audio_bytes: bytes) -> np.ndarray:
-    """Load uploaded bytes as mono 16 kHz audio, padded/truncated to 10 seconds."""
-    buf = io.BytesIO(audio_bytes)
-    wave, _ = librosa.load(buf, sr=SAMPLE_RATE, mono=True, duration=DURATION)
+    """Load uploaded WAV bytes as mono 16 kHz audio, padded/truncated to 10 seconds."""
+    wave, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32", always_2d=False)
+    if wave.ndim > 1:
+        wave = wave.mean(axis=1)
+    if sr != SAMPLE_RATE:
+        wave = librosa.resample(wave, orig_sr=sr, target_sr=SAMPLE_RATE)
     target_len = int(SAMPLE_RATE * DURATION)
     if len(wave) < target_len:
         wave = np.pad(wave, (0, target_len - len(wave)))
-    return wave[:target_len]
+    return wave[:target_len].astype(np.float32)
 
 
 def compute_log_mel(wave: np.ndarray) -> np.ndarray:
@@ -232,53 +235,63 @@ def predict(audio_bytes: bytes, machine: MachineType, registry: ModelRegistry) -
         "error_map": _error_map_to_b64(errors, threshold),
     }
 
+def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    crc = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
+    return struct.pack("!I", len(payload)) + chunk_type + payload + struct.pack("!I", crc)
 
-def _fig_to_b64(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor(), dpi=130)
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
+
+def _rgb_png_to_b64(rgb: np.ndarray) -> str:
+    """Encode an HxWx3 uint8 RGB array as PNG using only the stdlib."""
+    rgb = np.asarray(rgb, dtype=np.uint8)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("Expected HxWx3 RGB image.")
+    height, width, _ = rgb.shape
+    raw = b"".join(b"\x00" + rgb[row].tobytes() for row in range(height))
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(raw, level=6))
+        + _png_chunk(b"IEND", b"")
+    )
+    return base64.b64encode(png).decode("ascii")
+
+
+def _resize_nearest(image: np.ndarray, height: int, width: int) -> np.ndarray:
+    y_idx = np.linspace(0, image.shape[0] - 1, height).astype(int)
+    x_idx = np.linspace(0, image.shape[1] - 1, width).astype(int)
+    return image[np.ix_(y_idx, x_idx)]
+
+
+def _industrial_colormap(values: np.ndarray) -> np.ndarray:
+    """Small magma-like RGB map for fast spectrogram previews."""
+    values = np.clip(values, 0.0, 1.0).astype(np.float32)
+    r = np.clip(4.2 * values - 0.45, 0, 1)
+    g = np.clip(3.2 * values - 1.15, 0, 1)
+    b = np.clip(2.8 * (1.0 - values) + 0.25 * values, 0, 1) * (1.0 - 0.35 * values)
+    warm = np.stack([r, g, b], axis=-1)
+    return (warm * 255).astype(np.uint8)
+
+
+def _hot_colormap(values: np.ndarray) -> np.ndarray:
+    values = np.clip(values, 0.0, 1.0).astype(np.float32)
+    r = np.clip(3.0 * values, 0, 1)
+    g = np.clip(3.0 * values - 1.0, 0, 1)
+    b = np.clip(3.0 * values - 2.0, 0, 1)
+    return (np.stack([r, g, b], axis=-1) * 255).astype(np.uint8)
 
 
 def _spectrogram_to_b64(spec: np.ndarray, label: str, score: float, verdict: str) -> str:
-    color = "#ef4444" if verdict == "ANOMALOUS" else "#34d399"
-    fig, ax = plt.subplots(figsize=(10, 3.2))
-    fig.patch.set_facecolor("#0d0d0d")
-    ax.set_facecolor("#0d0d0d")
-    im = ax.imshow(spec, aspect="auto", origin="lower", cmap="magma")
-    cb = plt.colorbar(im, ax=ax, format="%+2.0f dB")
-    cb.ax.yaxis.label.set_color("#888")
-    cb.ax.tick_params(colors="#555")
-    ax.set_title(
-        f"{label} - Score: {score:.5f} - {verdict}",
-        color=color,
-        fontsize=11,
-        fontweight="bold",
-        pad=8,
-    )
-    ax.set_xlabel("Time frames", color="#888")
-    ax.set_ylabel("Mel bin", color="#888")
-    ax.tick_params(colors="#555")
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#333")
-    plt.tight_layout()
-    return _fig_to_b64(fig)
+    # Fast production preview: normalize dB values and encode directly as PNG.
+    del label, score, verdict
+    preview = np.flipud(spec)
+    lo, hi = np.percentile(preview, [2, 98])
+    norm = (preview - lo) / max(float(hi - lo), 1e-6)
+    norm = _resize_nearest(norm, height=220, width=760)
+    return _rgb_png_to_b64(_industrial_colormap(norm))
 
 
 def _error_map_to_b64(errors: np.ndarray, threshold: float) -> str:
-    heat = np.tile(errors, (24, 1))
-    fig, ax = plt.subplots(figsize=(10, 1.2))
-    fig.patch.set_facecolor("#0d0d0d")
-    ax.set_facecolor("#0d0d0d")
-    im = ax.imshow(heat, aspect="auto", origin="lower", cmap="hot", vmin=0, vmax=threshold * 2)
-    ax.set_title("Per-Window Reconstruction Error", color="#888", fontsize=9)
-    ax.set_xlabel("Window index", color="#555", fontsize=8)
-    ax.set_yticks([])
-    ax.tick_params(colors="#555", labelsize=7)
-    for spine in ax.spines.values():
-        spine.set_edgecolor("#333")
-    cb = plt.colorbar(im, ax=ax)
-    cb.ax.tick_params(colors="#555", labelsize=7)
-    plt.tight_layout()
-    return _fig_to_b64(fig)
+    norm = errors / max(float(threshold * 2.0), 1e-6)
+    heat = np.tile(norm[None, :], (64, 1))
+    heat = _resize_nearest(heat, height=80, width=760)
+    return _rgb_png_to_b64(_hot_colormap(heat))
