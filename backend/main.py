@@ -8,7 +8,7 @@ Endpoints:
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from inference import MODEL_CONFIGS, ModelRegistry, predict
@@ -46,6 +46,14 @@ def root() -> dict:
         "machines": "/machines",
     }
 
+@app.head("/")
+def root_head() -> Response:
+    return Response(status_code=200)
+
+
+@app.head("/health")
+def health_head() -> Response:
+    return Response(status_code=200)
 
 @app.get("/health")
 def health() -> dict:
