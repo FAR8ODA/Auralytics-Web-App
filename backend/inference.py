@@ -22,6 +22,7 @@ import zlib
 from pathlib import Path
 from typing import Literal
 
+import librosa
 import numpy as np
 import soundfile as sf
 import torch
@@ -174,84 +175,23 @@ def load_audio_bytes(audio_bytes: bytes) -> np.ndarray:
     if wave.ndim > 1:
         wave = wave.mean(axis=1)
     if sr != SAMPLE_RATE:
-        wave = _linear_resample(wave, orig_sr=sr, target_sr=SAMPLE_RATE)
+        wave = librosa.resample(wave.astype(np.float32), orig_sr=sr, target_sr=SAMPLE_RATE)
     target_len = int(SAMPLE_RATE * DURATION)
     if len(wave) < target_len:
         wave = np.pad(wave, (0, target_len - len(wave)))
     return wave[:target_len].astype(np.float32)
 
 
-def _linear_resample(wave: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-    if orig_sr == target_sr:
-        return wave.astype(np.float32)
-    duration = len(wave) / float(orig_sr)
-    target_len = max(1, int(round(duration * target_sr)))
-    old_x = np.linspace(0.0, duration, num=len(wave), endpoint=False)
-    new_x = np.linspace(0.0, duration, num=target_len, endpoint=False)
-    return np.interp(new_x, old_x, wave).astype(np.float32)
-
-
-def _hz_to_mel(hz: np.ndarray | float) -> np.ndarray | float:
-    hz = np.asarray(hz, dtype=np.float64)
-    f_sp = 200.0 / 3.0
-    mels = hz / f_sp
-    min_log_hz = 1000.0
-    min_log_mel = min_log_hz / f_sp
-    logstep = np.log(6.4) / 27.0
-    mask = hz >= min_log_hz
-    if np.any(mask):
-        mels = mels.copy()
-        mels[mask] = min_log_mel + np.log(hz[mask] / min_log_hz) / logstep
-    return mels
-
-
-def _mel_to_hz(mel: np.ndarray | float) -> np.ndarray | float:
-    mel = np.asarray(mel, dtype=np.float64)
-    f_sp = 200.0 / 3.0
-    freqs = f_sp * mel
-    min_log_hz = 1000.0
-    min_log_mel = min_log_hz / f_sp
-    logstep = np.log(6.4) / 27.0
-    mask = mel >= min_log_mel
-    freqs = np.where(mask, min_log_hz * np.exp(logstep * (mel - min_log_mel)), freqs)
-    return freqs
-
-
-def _mel_filterbank() -> np.ndarray:
-    mel_min = _hz_to_mel(0.0)
-    mel_max = _hz_to_mel(SAMPLE_RATE / 2.0)
-    mel_points = np.linspace(mel_min, mel_max, N_MELS + 2)
-    mel_f = _mel_to_hz(mel_points)
-    fftfreqs = np.linspace(0.0, SAMPLE_RATE / 2.0, 1 + N_FFT // 2)
-
-    fdiff = np.diff(mel_f)
-    ramps = mel_f[:, None] - fftfreqs[None, :]
-    filters = np.zeros((N_MELS, len(fftfreqs)), dtype=np.float64)
-    for i in range(N_MELS):
-        lower = -ramps[i] / fdiff[i]
-        upper = ramps[i + 2] / fdiff[i + 1]
-        filters[i] = np.maximum(0.0, np.minimum(lower, upper))
-
-    enorm = 2.0 / (mel_f[2 : N_MELS + 2] - mel_f[:N_MELS])
-    filters *= enorm[:, np.newaxis]
-    return filters.astype(np.float32)
-
-
-_MEL_FILTERBANK = _mel_filterbank()
-_HANN_WINDOW = (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(N_FFT) / N_FFT)).astype(np.float32)
-
-
 def compute_log_mel(wave: np.ndarray) -> np.ndarray:
-    """Compute raw log-mel dB features without runtime librosa dependencies."""
-    padded = np.pad(wave.astype(np.float32), (N_FFT // 2, N_FFT // 2), mode="constant")
-    n_frames = 1 + (len(padded) - N_FFT) // HOP_LENGTH
-    starts = np.arange(n_frames)[:, None] * HOP_LENGTH + np.arange(N_FFT)[None, :]
-    frames = padded[starts] * _HANN_WINDOW[None, :]
-    spectrum = np.fft.rfft(frames, n=N_FFT, axis=1)
-    power = (np.abs(spectrum) ** 2).T.astype(np.float32)
-    mel = np.maximum(_MEL_FILTERBANK @ power, 1e-10)
-    return (10.0 * np.log10(mel)).astype(np.float32)
-
+    """Compute the same raw log-mel dB features used during v2 training."""
+    mel = librosa.feature.melspectrogram(
+        y=wave,
+        sr=SAMPLE_RATE,
+        n_mels=N_MELS,
+        n_fft=N_FFT,
+        hop_length=HOP_LENGTH,
+    )
+    return librosa.power_to_db(mel, ref=1.0).astype(np.float32)
 
 def extract_windows(spec: np.ndarray) -> np.ndarray:
     """Flatten sliding 5-frame mel windows into shape (num_windows, 640)."""
@@ -354,3 +294,4 @@ def _error_map_to_b64(errors: np.ndarray, threshold: float) -> str:
     heat = np.tile(norm[None, :], (64, 1))
     heat = _resize_nearest(heat, height=80, width=760)
     return _rgb_png_to_b64(_hot_colormap(heat))
+
